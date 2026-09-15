@@ -1,0 +1,46 @@
+/* ============================================================
+   CLAY HOME — Webcam Preview
+   ============================================================ */
+
+#webcam-preview {
+  position: fixed;
+  bottom: 28px; right: 28px;
+  z-index: 510;
+  width: 180px; height: 135px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid rgba(232, 214, 194, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45),
+              0 0 0 1px rgba(0, 0, 0, 0.2);
+  background: rgba(10, 6, 4, 0.6);
+}
+
+#webcam-preview video,
+#webcam-preview canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* True selfie mirror feed */
+}
+
+#webcam-preview canvas {
+  z-index: 1;
+}
+
+#webcam-preview .cam-label {
+  position: absolute;
+  bottom: 6px; left: 8px;
+  z-index: 2;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(232, 214, 194, 0.6);
+  font-family: 'Inter', sans-serif;
+}
+
+/* Subtle corner glow when hands detected */
+#webcam-preview.tracking {
+  border-color: rgba(240, 153, 107, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45),
+              0 0 20px rgba(240, 153, 107, 0.12);
+}

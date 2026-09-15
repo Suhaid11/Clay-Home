@@ -1,0 +1,132 @@
+/* ============================================================
+   CLAY HOME — Base Styles & Loading Screen
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg:         #1c1512;
+  --bg-deep:    #0a0604;
+  --clay:       #a8562b;
+  --clay-dark:  #6b3419;
+  --cream:      #e8d6c2;
+  --cream-dim:  rgba(232, 214, 194, 0.55);
+  --ember:      #f0996b;
+  --ember-glow: rgba(240, 153, 107, 0.65);
+  --panel-bg:   rgba(40, 32, 28, 0.32);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --panel-blur: blur(18px) saturate(140%);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.75);
+  --text-muted: rgba(255, 255, 255, 0.55);
+  --radius-lg:  18px;
+  --radius-md:  12px;
+  --radius-sm:  10px;
+}
+
+* { margin: 0; padding: 0; outline: none !important; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%; overflow: hidden;
+  background: var(--bg-deep);
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  color: #fff;
+  user-select: none;
+}
+
+canvas { display: block; outline: none !important; }
+
+/* ── Background Photo ─────────────────────────────────────── */
+#bgPhoto {
+  position: fixed; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(180deg,
+      rgba(10, 6, 4, 0.40) 0%,
+      rgba(10, 6, 4, 0.05) 18%,
+      rgba(10, 6, 4, 0.0) 60%,
+      rgba(10, 6, 4, 0.20) 100%),
+    url('../assets/studio_bg.jpg');
+  background-size: cover;
+  background-position: center bottom;
+  filter: none;
+}
+
+/* ── Scene Container ──────────────────────────────────────── */
+#scene {
+  position: fixed; inset: 0; z-index: 1;
+}
+
+/* ── Loading Screen ───────────────────────────────────────── */
+@keyframes ls-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ls-pulse {
+  0%, 100% { box-shadow: 0 0 40px rgba(194, 106, 62, 0.15); }
+  50%      { box-shadow: 0 0 60px rgba(194, 106, 62, 0.30); }
+}
+
+@keyframes ls-fade-text {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.85; }
+}
+
+#loading-screen {
+  position: fixed; inset: 0; z-index: 10000;
+  background: radial-gradient(ellipse at center, #1f140a 0%, #0a0604 80%);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 32px;
+  transition: opacity 0.8s ease-out, visibility 0s linear 0.8s;
+  opacity: 1; visibility: visible;
+}
+
+#loading-screen.hidden {
+  opacity: 0; visibility: hidden; pointer-events: none;
+}
+
+#loading-screen .ls-logo {
+  font-size: 28px; font-weight: 200;
+  letter-spacing: 8px;
+  color: var(--cream);
+  text-transform: uppercase;
+  text-shadow: 0 0 30px rgba(232, 214, 194, 0.15);
+}
+
+#loading-screen .ls-wheel {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  border: 2px solid rgba(232, 214, 194, 0.08);
+  border-top-color: #c26a3e;
+  border-right-color: rgba(194, 106, 62, 0.5);
+  animation: ls-spin 1.4s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite,
+             ls-pulse 2.8s ease-in-out infinite;
+}
+
+#loading-screen .ls-track {
+  width: 280px; height: 2px;
+  background: rgba(232, 214, 194, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+#loading-screen .ls-bar {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #c26a3e, #e8a06e);
+  width: 0%;
+  transition: width 0.35s ease-out;
+  box-shadow: 0 0 12px rgba(194, 106, 62, 0.5);
+}
+
+#loading-screen .ls-status {
+  font-size: 11px; letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+  min-height: 14px;
+  font-variant-numeric: tabular-nums;
+  animation: ls-fade-text 3s ease-in-out infinite;
+}
+
+/* ── Hide UI while loading ────────────────────────────────── */
+body.app-loading .cs-ux,
+body.app-loading #webcam-preview { display: none !important; }
