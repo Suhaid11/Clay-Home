@@ -164,7 +164,8 @@ function buildMannequinHand(isLeft) {
       name: cfg.name,
       root: fingerRoot,
       joints,
-      radius: cfg.radius
+      radius: cfg.radius,
+      baseRot: cfg.baseRot
     });
   });
 
@@ -267,27 +268,35 @@ function updateHandPositions(trackedHands, ringRadius, dt) {
 
       // 2. Natural Pottery Flanking Kinematics:
       // Left hand stays on left flank; Right hand stays on right flank.
-      // Bringing hands together in camera cups the pot from both sides.
-      let handSpanProgress = 0;
+      // Bringing hands toward natural working posture reaches and sculpts the clay.
+      let distFromCenter = 0;
       if (sign > 0) {
         // Right hand: distance from camera center (0.50)
-        handSpanProgress = (handData.screenX - 0.50) / 0.26;
+        distFromCenter = handData.screenX - 0.50;
       } else {
         // Left hand: distance from camera center (0.50)
-        handSpanProgress = (0.50 - handData.screenX) / 0.26;
+        distFromCenter = 0.50 - handData.screenX;
       }
-      handSpanProgress = clamp(handSpanProgress, -0.25, 1.5);
+
+      // Ergonomic Reach Zones:
+      // - Hands wide (distFromCenter > 0.17): hovering smoothly outside pot
+      // - Natural chest/shoulder width (distFromCenter <= 0.17): direct contact with clay surface
+      // - Cupping closer (distFromCenter down to 0.04): progressive inward sculpting pressure
+      const CONTACT_THRESHOLD = 0.17;
+      const FULL_PRESSURE_THRESHOLD = 0.04;
 
       let targetX = 0;
       let inwardFactor = 0;
 
-      if (handSpanProgress >= 0.40) {
+      if (distFromCenter > CONTACT_THRESHOLD) {
         // Hand is hovering outside clay flank
-        targetX = (minDistance + (handSpanProgress - 0.40) * 0.85) * sign;
+        const hoverOffset = (distFromCenter - CONTACT_THRESHOLD) * 2.8;
+        targetX = (minDistance + hoverOffset) * sign;
+        inwardFactor = 0;
       } else {
         // Hand is in contact with clay surface
         targetX = minFlankX;
-        inwardFactor = clamp((0.40 - handSpanProgress) / 0.40, 0, 1);
+        inwardFactor = clamp((CONTACT_THRESHOLD - distFromCenter) / (CONTACT_THRESHOLD - FULL_PRESSURE_THRESHOLD), 0, 1);
       }
 
       // Depth (Z): naturally cupping slightly forward from pot axis
@@ -303,8 +312,8 @@ function updateHandPositions(trackedHands, ringRadius, dt) {
 
       // Contact state & gentle progressive carving
       st.contact = inwardFactor > 0.04;
-      st.pressure = Math.pow(inwardFactor, 1.5);
-      st.targetCarveR = Math.max(0.12, ringRadius[ringIdx] - inwardFactor * 0.14);
+      st.pressure = Math.pow(inwardFactor, 1.4);
+      st.targetCarveR = Math.max(0.12, ringRadius[ringIdx] - inwardFactor * 0.16);
 
       // Smooth position towards target (60fps responsive lerp)
       st.pos.x += (targetX - st.pos.x) * LERP_POS * dt;
@@ -346,53 +355,64 @@ function updateHandPositions(trackedHands, ringRadius, dt) {
       st.rootRot.y += (targetRootRotY - st.rootRot.y) * LERP_ROT * dt;
       st.rootRot.z += (targetRootRotZ - st.rootRot.z) * LERP_ROT * dt;
 
-      // 4. Anatomically Constrained 3D Wrist Orientation:
-      // Clamping to natural human wrist mobility prevents hands from flopping sideways!
-      // - Twist (Pronation/Supination): rotation around Y axis (bone length)
+      // 4. Responsive 3D Wrist Orientation:
+      // - Twist (Pronation/Supination): rotation around Y axis
       // - Pitch (Flexion/Extension): tilt forward/back
-      // - Yaw (Lateral Deviation): slight sideways tilt
-      const twistVal = clamp((handData.twist || 0) * 0.75, -0.65, 0.65);
-      const pitchVal = clamp((handData.pitch || 0) * 0.65, -0.38, 0.28);
-      const yawVal = clamp((handData.yaw || 0) * 0.40, -0.20, 0.20);
+      // - Yaw (Lateral Deviation): sideways tilt
+      const twistVal = clamp((handData.twist || 0) * 1.35, -0.75, 0.75);
+      const pitchVal = clamp((handData.pitch || 0) * 1.45, -0.65, 0.55);
+      const yawVal = clamp((handData.yaw || 0) * 1.25, -0.55, 0.55);
 
-      const basePalmY = isLeft ? 0.32 : -0.32;
-      const targetPalmRotY = basePalmY + twistVal;
+      const basePalmY = isLeft ? 0.28 : -0.28;
+      // Inward wrist pronation turns palm inward towards clay pot for both hands
+      const targetPalmRotY = basePalmY - twistVal;
+      // pitchVal: negative tilts forward towards clay (-X rot), positive tilts backward towards user
       const targetPalmRotX = -0.18 + pitchVal;
-      const targetPalmRotZ = (isLeft ? 0.06 : -0.06) + yawVal;
+      // yawVal: tilts right when hand tilts right (-Z rot)
+      const targetPalmRotZ = (isLeft ? 0.06 : -0.06) - yawVal;
 
       st.palmRot.x += (targetPalmRotX - st.palmRot.x) * LERP_ROT * dt;
       st.palmRot.y += (targetPalmRotY - st.palmRot.y) * LERP_ROT * dt;
       st.palmRot.z += (targetPalmRotZ - st.palmRot.z) * LERP_ROT * dt;
 
-      // 6. Full 5-Finger Articulation & Gestures
+      // 6. Full 5-Finger Articulation & Natural Human Gestures
       const spreadDelta = ((handData.spread || 0.20) - 0.20) * 0.75;
-      const surfaceClearance = Math.max(0, actualDist - actualMaxR);
-      // Limit curl when touching clay so fingertips do not pierce into the clay mesh
-      const maxCurlAllowed = 0.38 + surfaceClearance * 1.5;
 
       mesh.fingers.forEach((finger, fIdx) => {
-        const curlVal = (handData.curls && handData.curls[fIdx] !== undefined) ? handData.curls[fIdx] : 0.12;
-        const contactFlex = st.contact ? 0.25 * st.pressure : 0.0;
-        const totalFlex = Math.max(0, Math.min(maxCurlAllowed, curlVal * 1.05 + contactFlex));
+        const curlVal = (handData.curls && handData.curls[fIdx] !== undefined) ? handData.curls[fIdx] : 0.08;
+        const contactFlex = st.contact ? 0.12 * st.pressure : 0.0;
+        const totalFlex = clamp(curlVal * 1.05 + contactFlex, 0, 1.0);
 
-        // Sub-joint phalanx curling
-        finger.joints.forEach((joint, jIdx) => {
-          joint.rotation.x = -totalFlex * (0.36 + jIdx * 0.22);
-        });
+        if (finger.name === 'thumb') {
+          // Thumb: MCP base knuckle flexes forward and folds across palm
+          finger.root.rotation.x = 0.25 - totalFlex * 0.35;
+          finger.root.rotation.y = (isLeft ? -0.40 : 0.40) + (isLeft ? -totalFlex * 0.42 : totalFlex * 0.42);
+          finger.root.rotation.z = (isLeft ? -0.20 : 0.20);
 
-        // Finger spread / fan-out
-        if (fIdx === 1) {
-          // Index fans outward (medial for left, lateral for right)
-          finger.root.rotation.z = (isLeft ? -0.05 : 0.05) + (isLeft ? -spreadDelta : spreadDelta);
-        } else if (fIdx === 3) {
-          // Ring finger fans outward slightly
-          finger.root.rotation.z = (isLeft ? 0.04 : -0.04) + (isLeft ? spreadDelta * 0.5 : -spreadDelta * 0.5);
-        } else if (fIdx === 4) {
-          // Pinky finger fans outward
-          finger.root.rotation.z = (isLeft ? 0.08 : -0.08) + (isLeft ? spreadDelta : -spreadDelta);
-        } else if (fIdx === 0) {
-          // Thumb curls inward across palm
-          finger.root.rotation.y = (isLeft ? -0.45 : 0.45) + (isLeft ? totalFlex * 0.35 : -totalFlex * 0.35);
+          finger.joints.forEach((joint, jIdx) => {
+            joint.rotation.x = -totalFlex * (0.45 + jIdx * 0.35);
+          });
+        } else {
+          // Other 4 fingers (Index, Middle, Ring, Pinky):
+          // 1. Base knuckle (MCP) flexes forward into palm (towards -Z)
+          const baseRot = finger.baseRot || [0.08, 0, 0];
+          finger.root.rotation.x = baseRot[0] - totalFlex * 0.85;
+
+          // Finger fan spread
+          if (fIdx === 1) {
+            finger.root.rotation.z = (isLeft ? -0.05 : 0.05) + (isLeft ? -spreadDelta : spreadDelta);
+          } else if (fIdx === 3) {
+            finger.root.rotation.z = (isLeft ? 0.04 : -0.04) + (isLeft ? spreadDelta * 0.5 : -spreadDelta * 0.5);
+          } else if (fIdx === 4) {
+            finger.root.rotation.z = (isLeft ? 0.08 : -0.08) + (isLeft ? spreadDelta : -spreadDelta);
+          } else {
+            finger.root.rotation.z = 0;
+          }
+
+          // 2. Sub-joints (PIP & DIP) curl smoothly forward
+          finger.joints.forEach((joint, jIdx) => {
+            joint.rotation.x = -totalFlex * (0.95 + jIdx * 0.40);
+          });
         }
       });
 
@@ -418,9 +438,19 @@ function updateHandPositions(trackedHands, ringRadius, dt) {
       st.palmRot.z += (restPalmZ - st.palmRot.z) * 3.5 * dt;
 
       mesh.fingers.forEach(finger => {
-        finger.joints.forEach(joint => {
-          joint.rotation.x += (-0.16 - joint.rotation.x) * 3.0 * dt;
-        });
+        if (finger.name === 'thumb') {
+          finger.root.rotation.x += (0.25 - finger.root.rotation.x) * 3.0 * dt;
+          finger.root.rotation.y += ((isLeft ? -0.40 : 0.40) - finger.root.rotation.y) * 3.0 * dt;
+          finger.joints.forEach(joint => {
+            joint.rotation.x += (-0.08 - joint.rotation.x) * 3.0 * dt;
+          });
+        } else {
+          const baseRot = finger.baseRot || [0.08, 0, 0];
+          finger.root.rotation.x += (baseRot[0] - finger.root.rotation.x) * 3.0 * dt;
+          finger.joints.forEach(joint => {
+            joint.rotation.x += (-0.08 - joint.rotation.x) * 3.0 * dt;
+          });
+        }
       });
     }
 

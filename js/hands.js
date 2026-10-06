@@ -171,18 +171,51 @@ const POSITION_SMOOTH = 0.75;
 const ROTATION_SMOOTH = 0.70;
 let refHandSpan = 0.28;
 
-// Helper: compute curl of a finger (0 = straight open, 1 = curled)
-function computeFingerCurl(lm, mcpIdx, pipIdx, tipIdx, wristIdx = 0) {
+// Helper: compute curl of fingers (0 = straight open, 1 = curled)
+// Uses segment length contraction ratio in 2D image plane — scale-invariant and robust to depth noise
+function computeFingerCurl(lm, mcpIdx, pipIdx, dipIdx, tipIdx) {
   const mcp = lm[mcpIdx];
+  const pip = lm[pipIdx];
+  const dip = lm[dipIdx];
   const tip = lm[tipIdx];
-  const wrist = lm[wristIdx];
-  
-  const tipToWrist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y, (tip.z || 0) - (wrist.z || 0));
-  const mcpToWrist = Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y, (mcp.z || 0) - (wrist.z || 0));
-  
-  if (mcpToWrist < 1e-4) return 0.2;
-  const ratio = tipToWrist / mcpToWrist;
-  const curl = 1 - (ratio - 0.75) / 1.05;
+  if (!mcp || !pip || !dip || !tip) return 0.1;
+
+  const d1 = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
+  const d2 = Math.hypot(dip.x - pip.x, dip.y - pip.y);
+  const d3 = Math.hypot(tip.x - dip.x, tip.y - dip.y);
+  const totalLen = (d1 + d2 + d3) || 1e-4;
+
+  const tipToMcp = Math.hypot(tip.x - mcp.x, tip.y - mcp.y);
+  const ratio = tipToMcp / totalLen;
+
+  // Extended straight: ratio >= 0.82 -> curl = 0
+  // Curled into fist: ratio <= 0.32 -> curl = 1
+  const curl = (0.82 - ratio) / 0.50;
+  return Math.max(0, Math.min(1, curl));
+}
+
+function computeThumbCurl(lm) {
+  const mcp = lm[2];
+  const ip = lm[3];
+  const tip = lm[4];
+  const pinkyMcp = lm[17];
+  const indexMcp = lm[5];
+  if (!mcp || !ip || !tip || !pinkyMcp || !indexMcp) return 0.1;
+
+  const d1 = Math.hypot(ip.x - mcp.x, ip.y - mcp.y);
+  const d2 = Math.hypot(tip.x - ip.x, tip.y - ip.y);
+  const thumbLen = (d1 + d2) || 1e-4;
+
+  const tipToMcp = Math.hypot(tip.x - mcp.x, tip.y - mcp.y);
+  const ratio = tipToMcp / thumbLen;
+
+  // Check distance to pinky knuckle across palm
+  const palmWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y) || 1e-4;
+  const tipToPinky = Math.hypot(tip.x - pinkyMcp.x, tip.y - pinkyMcp.y) / palmWidth;
+
+  const flexCurl = (0.84 - ratio) / 0.44;
+  const foldCurl = (1.40 - tipToPinky) / 0.60;
+  const curl = Math.max(flexCurl, foldCurl * 0.85);
   return Math.max(0, Math.min(1, curl));
 }
 
@@ -196,6 +229,8 @@ hands.setOptions({
   minDetectionConfidence: 0.55,
   minTrackingConfidence: 0.50
 });
+
+let activeSingleSide = null;
 
 hands.onResults(results => {
   const rawHands = results.multiHandLandmarks || [];
@@ -211,6 +246,7 @@ hands.onResults(results => {
   trackedHands.right.active = false;
 
   if (smoothedHands.length === 0) {
+    activeSingleSide = null;
     drawSkeleton([], []);
     if (statusEl && video.dataset.ready) {
       statusEl.textContent = 'show your hands to the camera';
@@ -255,7 +291,7 @@ hands.onResults(results => {
     const p9 = middleMcp;
     const p17 = pinkyMcp;
 
-    // Wrist to Middle MCP (Forward/Up axis along palm)
+    // Wrist to Middle MCP (Pointing UP along palm)
     const fwdX = (1 - p9.x) - (1 - p0.x);
     const fwdY = (1 - p9.y) - (1 - p0.y); // pointing up
     const fwdZ = -((p9.z || 0) - (p0.z || 0)); // pointing towards camera
@@ -265,37 +301,54 @@ hands.onResults(results => {
     const nFwdY = fwdY / fwdLen;
     const nFwdZ = fwdZ / fwdLen;
 
-    // Index MCP to Pinky MCP (Knuckle transverse axis)
-    const sideX = (1 - p17.x) - (1 - p5.x);
-    const sideY = (1 - p17.y) - (1 - p5.y);
-    const sideZ = -((p17.z || 0) - (p5.z || 0));
+    // Lateral knuckle axis across palm (Medial -> Lateral)
+    // In mirrored selfie space:
+    // User's Left hand: Index is medial (inner, +X side), Pinky is lateral (outer, -X side)
+    // User's Right hand: Index is medial (inner, -X side), Pinky is lateral (outer, +X side)
+    const isAnatLeft = anatomicalSide === 'left' || (!anatomicalSide && screenX < 0.5);
+    
+    // Transverse axis pointing laterally across hand
+    const rawSideX = (1 - p17.x) - (1 - p5.x);
+    const rawSideY = (1 - p17.y) - (1 - p5.y);
+    const rawSideZ = -((p17.z || 0) - (p5.z || 0));
+    const sideLen = Math.hypot(rawSideX, rawSideY, rawSideZ) || 1e-4;
+    
+    const latX = rawSideX / sideLen;
+    const latY = rawSideY / sideLen;
+    const latZ = rawSideZ / sideLen;
 
-    const sideLen = Math.hypot(sideX, sideY, sideZ) || 1e-4;
-    const nSideX = sideX / sideLen;
-    const nSideY = sideY / sideLen;
-    const nSideZ = sideZ / sideLen;
+    // Anatomical Palm Normal (consistently pointing OUT of palm toward camera):
+    let normX, normY, normZ;
+    if (isAnatLeft) {
+      // Left hand: knuckles go +X to -X (lat points left) -> Fwd x Lat points OUT towards camera (+Z)
+      normX = nFwdY * latZ - nFwdZ * latY;
+      normY = nFwdZ * latX - nFwdX * latZ;
+      normZ = nFwdX * latY - nFwdY * latX;
+    } else {
+      // Right hand: knuckles go -X to +X (lat points right) -> Lat x Fwd points OUT towards camera (+Z)
+      normX = latY * nFwdZ - latZ * nFwdY;
+      normY = latZ * nFwdX - latX * nFwdZ;
+      normZ = latX * nFwdY - latY * nFwdX;
+    }
 
-    // Palm Normal: Cross product of Knuckle axis and Forward axis
-    const normX = nSideY * nFwdZ - nSideZ * nFwdY;
-    const normY = nSideZ * nFwdX - nSideX * nFwdZ;
-    const normZ = nSideX * nFwdY - nSideY * nFwdX;
+    // Pitch: Hand tilting forward into screen (towards clay) vs backward towards user
+    // Folding backward tilts backward (+X rotation), folding forward tilts forward (-X rotation)
+    const pitch = Math.atan2(-nFwdZ * 2.8, Math.max(0.08, Math.hypot(nFwdX, nFwdY)));
 
-    // Pitch: Hand tilting forward into screen vs backward towards user
-    const pitch = Math.atan2(-nFwdZ, Math.hypot(nFwdX, nFwdY));
-
-    // Yaw: Hand turning left vs right
-    const yaw = Math.atan2(nFwdX, Math.max(0.01, nFwdY));
+    // Yaw: Hand turning left vs right across screen plane
+    const yaw = Math.atan2(nFwdX * 1.3, Math.max(0.08, nFwdY));
 
     // Wrist Twist (Pronation / Supination):
-    const twist = Math.atan2(normX, -normZ);
+    // Amplified horizontal tilt of palm normal vector
+    const twist = Math.atan2(normX * 2.6, Math.max(0.05, normZ));
 
-    // Finger curls (flexion) for all 5 digits
+    // Robust 5-Finger curls (flexion) from 0 (open) to 1 (closed fist)
     const curls = [
-      computeFingerCurl(lm, 2, 3, 4, 0),   // Thumb
-      computeFingerCurl(lm, 5, 6, 8, 0),   // Index
-      computeFingerCurl(lm, 9, 10, 12, 0), // Middle
-      computeFingerCurl(lm, 13, 14, 16, 0),// Ring
-      computeFingerCurl(lm, 17, 18, 20, 0) // Pinky
+      computeThumbCurl(lm),
+      computeFingerCurl(lm, 5, 6, 7, 8),    // Index
+      computeFingerCurl(lm, 9, 10, 11, 12),  // Middle
+      computeFingerCurl(lm, 13, 14, 15, 16), // Ring
+      computeFingerCurl(lm, 17, 18, 19, 20)  // Pinky
     ];
 
     // Finger spread (fan-out)
@@ -319,14 +372,26 @@ hands.onResults(results => {
   // Assign to left/right hands correctly
   if (detected.length === 1) {
     const h = detected[0];
-    let side = h.anatomicalSide || (h.screenX < 0.50 ? 'left' : 'right');
-    // Strong spatial override if hand is clearly on one side of frame
-    if (h.screenX < 0.38) side = 'left';
-    else if (h.screenX > 0.62) side = 'right';
+    let side;
+    if (activeSingleSide) {
+      // Hysteresis: keep active side unless hand crosses far across the screen
+      if (activeSingleSide === 'right' && h.screenX < 0.35) {
+        side = 'left';
+      } else if (activeSingleSide === 'left' && h.screenX > 0.65) {
+        side = 'right';
+      } else {
+        side = activeSingleSide;
+      }
+    } else {
+      // In mirrored selfie space: screenX >= 0.50 is user's physical right hand
+      side = h.screenX >= 0.50 ? 'right' : 'left';
+    }
+    activeSingleSide = side;
 
     handSides[h.origIdx] = side;
     applyDetection(trackedHands[side], h);
   } else if (detected.length >= 2) {
+    activeSingleSide = null;
     // Leftmost hand on mirrored screen is user's physical LEFT hand
     // Rightmost hand on mirrored screen is user's physical RIGHT hand
     detected.sort((a, b) => a.screenX - b.screenX);
